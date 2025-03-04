@@ -45,11 +45,11 @@ pub struct State {
     queue: Queue,
     config: SurfaceConfiguration,
     size: PhysicalSize<u32>,
+    window: Arc<Window>,
 }
 
 #[derive(Default)]
 pub struct RayTracer {
-    window: Option<Arc<Window>>,
     state: Option<State>,
 }
 
@@ -67,7 +67,7 @@ impl State {
             ..Default::default()
         });
 
-        let surface = instance.create_surface(window).unwrap();
+        let surface = instance.create_surface(window.clone()).unwrap();
 
         let adapter = block_on(instance.request_adapter(&RequestAdapterOptions {
             power_preference: PowerPreference::default(),
@@ -104,7 +104,7 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
-        Self { surface, device, queue, config, size }
+        Self { surface, device, queue, config, size, window }
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -159,8 +159,7 @@ impl State {
 impl ApplicationHandler for RayTracer {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(event_loop.create_window(Window::default_attributes()).unwrap());
-        self.window = Some(window);
-        self.state = Some(State::new(self.get_window()));
+        self.state = Some(State::new(window));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
@@ -173,7 +172,7 @@ impl ApplicationHandler for RayTracer {
                 event_loop.exit();
             },
             WindowEvent::RedrawRequested => {
-                if self.window.is_none() {
+                if self.state.is_none() {
                     return;
                 }
                 self.get_window().request_redraw();
@@ -209,7 +208,7 @@ impl RayTracer {
     }
 
     pub fn get_window(&self) -> Arc<Window> {
-        self.window.as_ref().unwrap().clone()
+        self.state.as_ref().unwrap().window.clone()
     }
 
     pub fn get_state(&mut self) -> &mut State {
