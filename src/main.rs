@@ -1,5 +1,6 @@
 use ray_tracer::RayTracer;
 
 fn main() {
-    RayTracer::run().unwrap();
+    let mut tracer = RayTracer::default();
+    tracer.run().unwrap();
 }
