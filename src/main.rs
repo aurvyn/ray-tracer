@@ -1,3 +1,5 @@
+use ray_tracer::RayTracer;
+
 fn main() {
-    println!("Hello, world!");
+    RayTracer::run().unwrap();
 }
