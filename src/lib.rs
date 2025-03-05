@@ -39,6 +39,10 @@ use wgpu::{
 
 use pollster::block_on;
 
+pub struct Settings {
+    pub bg_color: Color,
+}
+
 pub struct State {
     surface: Surface<'static>,
     device: Device,
@@ -46,6 +50,7 @@ pub struct State {
     config: SurfaceConfiguration,
     size: PhysicalSize<u32>,
     window: Arc<Window>,
+    settings: Settings,
 }
 
 #[derive(Default)]
@@ -104,7 +109,16 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
-        Self { surface, device, queue, config, size, window }
+        let settings = Settings {
+            bg_color: Color {
+                r: 0.1,
+                g: 0.2,
+                b: 0.3,
+                a: 1.0,
+            },
+        };
+
+        Self { surface, device, queue, config, size, window, settings }
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -116,8 +130,18 @@ impl State {
         }
     }
 
-    fn input(&mut self, _event: &WindowEvent) -> bool {
-        false
+    fn input(&mut self, event: &WindowEvent) -> bool {
+        match event {
+            WindowEvent::CursorMoved {
+                device_id: _,
+                position
+            } => {
+                self.settings.bg_color.r = position.x / self.size.width as f64;
+                self.settings.bg_color.g = position.y / self.size.height as f64;
+                true
+            }
+            _ => false,
+        }
     }
 
     fn update(&mut self) {
@@ -136,12 +160,7 @@ impl State {
                 view: &view,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Clear(Color {
-                        r: 0.1,
-                        g: 0.2,
-                        b: 0.3,
-                        a: 1.0,
-                    }),
+                    load: LoadOp::Clear(self.settings.bg_color),
                     store: StoreOp::Store,
                 },
             })],
