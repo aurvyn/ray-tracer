@@ -14,20 +14,34 @@ use winit::{
 
 use wgpu::{
     Backends,
+    BlendState,
     Color,
+    ColorTargetState,
+    ColorWrites,
     CommandEncoderDescriptor,
     Device,
     DeviceDescriptor,
+    Face,
     Features,
+    FragmentState,
+    FrontFace,
     Instance,
     InstanceDescriptor,
     Limits,
     LoadOp,
+    MultisampleState,
     Operations,
+    PipelineCompilationOptions,
+    PipelineLayoutDescriptor,
+    PolygonMode,
     PowerPreference,
+    PrimitiveState,
+    PrimitiveTopology,
     Queue,
     RenderPassColorAttachment,
     RenderPassDescriptor,
+    RenderPipeline,
+    RenderPipelineDescriptor,
     RequestAdapterOptions,
     StoreOp,
     Surface,
@@ -35,6 +49,8 @@ use wgpu::{
     SurfaceError,
     TextureUsages,
     TextureViewDescriptor,
+    VertexState,
+    include_wgsl,
 };
 
 use pollster::block_on;
@@ -50,6 +66,7 @@ pub struct State {
     config: SurfaceConfiguration,
     size: PhysicalSize<u32>,
     window: Arc<Window>,
+    render_pipeline: RenderPipeline,
     settings: Settings,
 }
 
@@ -109,6 +126,52 @@ impl State {
             desired_maximum_frame_latency: 2,
         };
 
+        let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
+
+        let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("Render Pipeline Layout"),
+            bind_group_layouts: &[],
+            push_constant_ranges: &[],
+        });
+
+        let render_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("Render Pipeline"),
+            layout: Some(&render_pipeline_layout),
+            vertex: VertexState {
+                module: &shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(FragmentState {
+                module: &shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(ColorTargetState {
+                    format: config.format,
+                    blend: Some(BlendState::REPLACE),
+                    write_mask: ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            primitive: PrimitiveState {
+                topology: PrimitiveTopology::TriangleList,
+                strip_index_format: None,
+                front_face: FrontFace::Ccw,
+                cull_mode: Some(Face::Back),
+                polygon_mode: PolygonMode::Fill,
+                unclipped_depth: false,
+                conservative: false,
+            },
+            depth_stencil: None,
+            multisample: MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
+            multiview: None,
+            cache: None,
+        });
+
         let settings = Settings {
             bg_color: Color {
                 r: 0.1,
@@ -118,7 +181,7 @@ impl State {
             },
         };
 
-        Self { surface, device, queue, config, size, window, settings }
+        Self { surface, device, queue, config, size, window, render_pipeline, settings }
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -154,7 +217,7 @@ impl State {
         let mut encoder = self.device.create_command_encoder(&CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
-        encoder.begin_render_pass(&RenderPassDescriptor {
+        let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("Render Pass"),
             color_attachments: &[Some(RenderPassColorAttachment {
                 view: &view,
@@ -168,6 +231,9 @@ impl State {
             occlusion_query_set: None,
             timestamp_writes: None,
         });
+        render_pass.set_pipeline(&self.render_pipeline);
+        render_pass.draw(0..3, 0..1);
+        drop(render_pass);
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
 
