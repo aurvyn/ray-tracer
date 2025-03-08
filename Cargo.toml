@@ -9,10 +9,11 @@ env_logger = "0.11"
 log = "0.4"
 wgpu = "24.0"
 pollster = "0.4"
-bytemuck = { version = "1.16", features = [ "derive" ] }
+bytemuck = { version = "1.22", features = [ "derive" ] }
+gltf = "1"
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-console_error_panic_hook = "0.1.6"
+console_error_panic_hook = "0.1.7"
 console_log = "1.0"
 wgpu = { version = "24.0", features = ["webgl"] }
 wasm-bindgen = "0.2"
