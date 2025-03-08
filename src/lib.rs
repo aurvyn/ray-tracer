@@ -13,8 +13,22 @@ use winit::{
 };
 
 use wgpu::{
+    util::{
+        BufferInitDescriptor,
+        DeviceExt,
+    },
     Backends,
+    BindGroup,
+    BindGroupDescriptor,
+    BindGroupEntry,
+    BindGroupLayoutDescriptor,
+    BindGroupLayoutEntry,
+    BindingType,
     BlendState,
+    Buffer,
+    BufferAddress,
+    BufferBindingType,
+    BufferUsages,
     Color,
     ColorTargetState,
     ColorWrites,
@@ -43,14 +57,19 @@ use wgpu::{
     RenderPipeline,
     RenderPipelineDescriptor,
     RequestAdapterOptions,
+    ShaderStages,
     StoreOp,
     Surface,
     SurfaceConfiguration,
     SurfaceError,
     TextureUsages,
     TextureViewDescriptor,
+    VertexAttribute,
+    VertexBufferLayout,
     VertexState,
+    VertexStepMode,
     include_wgsl,
+    vertex_attr_array,
 };
 
 use pollster::block_on;
@@ -67,12 +86,68 @@ pub struct State {
     size: PhysicalSize<u32>,
     window: Arc<Window>,
     render_pipeline: RenderPipeline,
+    vertex_buffer: Buffer,
+    material_bind_group: BindGroup,
+    num_vertices: u32,
     settings: Settings,
 }
 
 #[derive(Default)]
 pub struct RayTracer {
     state: Option<State>,
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Vec3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
+macro_rules! vec3 {
+    [$x:expr, $y:expr, $z:expr] => {
+        Vec3 { x: $x, y: $y, z: $z }
+    };
+}
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct Material {
+    ambient: [f32; 4],
+    diffuse: [f32; 4],
+    specular: [f32; 4],
+}
+
+const VERTICES: &[Vec3] = &[
+    vec3![0.0, 0.5, 0.0],
+    vec3![-0.5, -0.5, 0.0],
+    vec3![0.5, -0.5, 0.0],
+];
+
+const MATERIALS: &[Material] = &[
+    Material {
+        ambient: [1.0, 1.0, 1.0, 0.2],
+        diffuse: [0.0, 0.0, 0.0, 0.0],
+        specular: [0.0, 0.0, 0.0, 0.0],
+    }
+];
+
+trait Desc {
+    const ATTRIBS: [VertexAttribute; 1];
+    fn desc() -> VertexBufferLayout<'static>;
+}
+
+impl Desc for Vec3 {
+    const ATTRIBS: [VertexAttribute; 1] = vertex_attr_array![0 => Float32x3];
+
+    fn desc() -> VertexBufferLayout<'static> {
+        VertexBufferLayout {
+            array_stride: std::mem::size_of::<Self>() as BufferAddress,
+            step_mode: VertexStepMode::Vertex,
+            attributes: &Self::ATTRIBS,
+        }
+    }
 }
 
 impl State {
@@ -128,9 +203,40 @@ impl State {
 
         let shader = device.create_shader_module(include_wgsl!("shader.wgsl"));
 
+        let material_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Material buffer"),
+            contents: bytemuck::cast_slice(MATERIALS),
+            usage: BufferUsages::STORAGE,
+        });
+
+        let material_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            entries: &[BindGroupLayoutEntry {
+                binding: 0,
+                visibility: ShaderStages::FRAGMENT,
+                ty: BindingType::Buffer {
+                    ty: BufferBindingType::Storage {
+                        read_only: true
+                    },
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+            label: Some("material_bind_group_layout"),
+        });
+
+        let material_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            layout: &material_bind_group_layout,
+            entries: &[BindGroupEntry {
+                binding: 0,
+                resource: material_buffer.as_entire_binding(),
+            }],
+            label: Some("material_bind_group"),
+        });
+
         let render_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[],
+            bind_group_layouts: &[&material_bind_group_layout],
             push_constant_ranges: &[],
         });
 
@@ -140,7 +246,9 @@ impl State {
             vertex: VertexState {
                 module: &shader,
                 entry_point: Some("vs_main"),
-                buffers: &[],
+                buffers: &[
+                    Vec3::desc(),
+                ],
                 compilation_options: PipelineCompilationOptions::default(),
             },
             fragment: Some(FragmentState {
@@ -148,7 +256,7 @@ impl State {
                 entry_point: Some("fs_main"),
                 targets: &[Some(ColorTargetState {
                     format: config.format,
-                    blend: Some(BlendState::REPLACE),
+                    blend: Some(BlendState::ALPHA_BLENDING),
                     write_mask: ColorWrites::ALL,
                 })],
                 compilation_options: PipelineCompilationOptions::default(),
@@ -172,6 +280,14 @@ impl State {
             cache: None,
         });
 
+        let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Some("Vector buffer"),
+            contents: bytemuck::cast_slice(VERTICES),
+            usage: BufferUsages::VERTEX,
+        });
+
+        let num_vertices = VERTICES.len() as u32;
+
         let settings = Settings {
             bg_color: Color {
                 r: 0.1,
@@ -181,7 +297,19 @@ impl State {
             },
         };
 
-        Self { surface, device, queue, config, size, window, render_pipeline, settings }
+        Self {
+            surface,
+            device,
+            queue,
+            config,
+            size,
+            window,
+            render_pipeline,
+            vertex_buffer,
+            material_bind_group,
+            num_vertices,
+            settings
+        }
     }
 
     fn resize(&mut self, new_size: PhysicalSize<u32>) {
@@ -232,7 +360,9 @@ impl State {
             timestamp_writes: None,
         });
         render_pass.set_pipeline(&self.render_pipeline);
-        render_pass.draw(0..3, 0..1);
+        render_pass.set_bind_group(0, &self.material_bind_group, &[]);
+        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
+        render_pass.draw(0..self.num_vertices, 0..1);
         drop(render_pass);
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
