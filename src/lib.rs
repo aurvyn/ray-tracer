@@ -74,6 +74,8 @@ use wgpu::{
 
 use pollster::block_on;
 
+const GLTF_PATH: &str = "res/triangle.gltf";
+
 pub struct Settings {
     pub bg_color: Color,
 }
@@ -119,20 +121,6 @@ struct Material {
     specular: [f32; 4],
 }
 
-const VERTICES: &[Vec3] = &[
-    vec3![0.0, 0.5, 0.0],
-    vec3![-0.5, -0.5, 0.0],
-    vec3![0.5, -0.5, 0.0],
-];
-
-const MATERIALS: &[Material] = &[
-    Material {
-        ambient: [1.0, 1.0, 1.0, 0.2],
-        diffuse: [0.0, 0.0, 0.0, 0.0],
-        specular: [0.0, 0.0, 0.0, 0.0],
-    }
-];
-
 trait Desc {
     const ATTRIBS: [VertexAttribute; 1];
     fn desc() -> VertexBufferLayout<'static>;
@@ -151,7 +139,7 @@ impl Desc for Vec3 {
 }
 
 impl State {
-    fn new(window: Arc<Window>) -> Self {
+    fn new(window: Arc<Window>, vertices: Vec<Vec3>, materials: Vec<Material>) -> Self {
         let size = window.inner_size();
 
         // The instance is a handle to our GPU
@@ -205,7 +193,7 @@ impl State {
 
         let material_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Material buffer"),
-            contents: bytemuck::cast_slice(MATERIALS),
+            contents: bytemuck::cast_slice(&materials),
             usage: BufferUsages::STORAGE,
         });
 
@@ -282,11 +270,11 @@ impl State {
 
         let vertex_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Some("Vector buffer"),
-            contents: bytemuck::cast_slice(VERTICES),
+            contents: bytemuck::cast_slice(&vertices),
             usage: BufferUsages::VERTEX,
         });
 
-        let num_vertices = VERTICES.len() as u32;
+        let num_vertices = vertices.len() as u32;
 
         let settings = Settings {
             bg_color: Color {
@@ -374,7 +362,30 @@ impl State {
 impl ApplicationHandler for RayTracer {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window = Arc::new(event_loop.create_window(Window::default_attributes()).unwrap());
-        self.state = Some(State::new(window));
+        let (doc, buffers, _) = gltf::import(GLTF_PATH).unwrap();
+        let mut vertices = vec![];
+        let mut materials = vec![];
+        for mesh in doc.meshes() {
+            for primitive in mesh.primitives() {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                if let Some(positions) = reader.read_positions() {
+                    let corners: Vec<[f32; 3]> = positions.collect();
+                    for vertex in corners {
+                        vertices.push(vec3![vertex[0], vertex[1], vertex[2]]);
+                    }
+                }
+            }
+        }
+        for material in doc.materials() {
+            let material = material.pbr_metallic_roughness();
+            let base_color = material.base_color_factor();
+            materials.push(Material {
+                ambient: [base_color[0], base_color[1], base_color[2], base_color[3]],
+                diffuse: [0.0, 0.0, 0.0, 0.0],
+                specular: [0.0, 0.0, 0.0, 0.0],
+            });
+        }
+        self.state = Some(State::new(window, vertices, materials));
     }
 
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
